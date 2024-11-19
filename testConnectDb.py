@@ -16,11 +16,11 @@ def ping(domain):
     # Extract packet loss, packets sent, and latency information
     packets_sent = re.search(r"Packets: Sent = (\d+)", output)
     packet_loss = re.search(r"(\d+)% loss", output)
-    latency = re.search(r"Average = (\d+ms)", output)
+    latency = re.search(r"Average = (\d+)ms", output)
 
-    packets_sent = packets_sent.group(1) if packets_sent else "N/A"
-    packet_loss = packet_loss.group(1) if packet_loss else "N/A"
-    latency = latency.group(1) if latency else "N/A"
+    packets_sent = int(packets_sent.group(1)) if packets_sent else "N/A"
+    packet_loss = int(packet_loss.group(1)) if packet_loss else "N/A"
+    latency = int(latency.group(1)) if latency else "N/A"
 
     return packets_sent, packet_loss, latency
 
@@ -66,7 +66,7 @@ def insert_data_to_db(country, ip, packets_sent, packet_loss, avg_latency, isp, 
 
         # Insert the data, including ISP and Local ISP information
         insert_query = """
-        INSERT INTO public.testping (country, ip, packets_sent, packet_loss, avg_latency, isp, local_isp)
+        INSERT INTO public.data_test (country, ip, packets_sent, packet_loss, avg_latency, isp, local_isp)
         VALUES (%s, %s, %s, %s, %s, %s, %s)
         """
         cursor.execute(insert_query, (country, ip, packets_sent, packet_loss, avg_latency, isp, local_isp))
