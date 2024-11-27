@@ -24,3 +24,6 @@ UnitedStates www.colocrossing.com
 UnitedStates advinservers.com
 UnitedStates www.netinformatik.com
 UnitedStates rpiservers.com
+HongKong 23.198.142.199
+Japan speed.open.ad.jp
+Euro capacom.net1c.net
