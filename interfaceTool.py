@@ -1,3 +1,4 @@
+import socket
 import tkinter as tk
 from tkinter import filedialog, scrolledtext
 from tkinter import ttk  # For improved styles
@@ -5,6 +6,10 @@ from threading import Thread, Event
 import time
 import subprocess
 import re
+
+import requests
+from ipwhois import IPWhois
+
 
 class PingApp:
     def __init__(self, root):
@@ -27,6 +32,9 @@ class PingApp:
         self.secondary_bg = "#34495E"  # Slightly lighter blue
         self.highlight_bg = "#27AE60"  # Green highlight
         self.text_color = "#ECF0F1"  # Light text
+        self.stop_color_button = "#FF0000" #red
+        self.start_color_button = "#00FF00" #green
+        self.blue_color = "#0099FF" #blue
 
         self.root.configure(bg=self.primary_bg)
 
@@ -57,7 +65,7 @@ class PingApp:
         self.file_label = ttk.Label(file_frame, text="No file selected", width=30, anchor="w")
         self.file_label.pack(side=tk.LEFT, padx=5)
 
-        self.select_button = ttk.Button(file_frame, text="Browse", command=self.select_file)
+        self.select_button = tk.Button(file_frame, text="Browse", command=self.select_file, bg=self.blue_color, fg="white", font=("Helvetica", 12))
         self.select_button.pack(side=tk.RIGHT, padx=5)
 
         # Ping settings
@@ -79,10 +87,10 @@ class PingApp:
         tracert_checkbox.pack(anchor=tk.W, pady=5)
 
         # Start/Stop buttons
-        self.start_button = ttk.Button(config_frame, text="Start Test", command=self.start_test, state=tk.DISABLED)
+        self.start_button = tk.Button(config_frame, text="Start", command=self.start_test, state=tk.DISABLED,  fg="white", font=("Helvetica", 12))
         self.start_button.pack(fill=tk.X, pady=10)
 
-        self.stop_button = ttk.Button(config_frame, text="Stop Test", command=self.stop_test, state=tk.DISABLED)
+        self.stop_button = tk.Button(config_frame, text="Stop", command=self.stop_test, state=tk.DISABLED, bg=self.stop_color_button, fg="white", font=("Helvetica", 12))
         self.stop_button.pack(fill=tk.X, pady=5)
 
         # Right result panel
@@ -91,7 +99,7 @@ class PingApp:
 
         tk.Label(result_frame, text="Results", font=("Helvetica", 14, "bold"), bg=self.secondary_bg, fg=self.text_color).pack(anchor=tk.W, pady=5)
 
-        self.output_area = scrolledtext.ScrolledText(result_frame, wrap=tk.WORD, font=("Courier", 10), bg="white", fg="black", height=25)
+        self.output_area = scrolledtext.ScrolledText(result_frame, wrap=tk.WORD, font=("Courier", 10), bg="#2B3E50", fg=self.text_color, height=25)
         self.output_area.pack(fill=tk.BOTH, expand=True, pady=10)
 
     def create_menu_bar(self):
@@ -178,19 +186,57 @@ class PingApp:
     def ping(self, domain):
         try:
             count = self.ping_count.get()
-            result = subprocess.run(['ping', '-n', count, domain], capture_output=True, text=True)
+            result = subprocess.run(['ping', '-n', '10', domain], capture_output=True, text=True)
             output = result.stdout
 
-            # Extract packet loss and latency information
+            # Kiểm tra đầu ra có lỗi không
+            if result.returncode != 0:
+                return f"Error pinging {domain}: Host unreachable or invalid."
+
+            # Sử dụng regex để lấy thông tin gói mất và độ trễ trung bình
+            packets_sent = re.search(r"Packets: Sent = (\d+)", output)
             packet_loss = re.search(r"(\d+)% loss", output)
-            avg_latency = re.search(r"Average = (\d+)ms", output)
+            latency = re.search(r"Average = (\d+)ms", output)
 
-            packet_loss = packet_loss.group(1) if packet_loss else "N/A"
-            avg_latency = avg_latency.group(1) if avg_latency else "N/A"
+            packets_sent = int(packets_sent.group(1)) if packets_sent else "N/A"
+            packet_loss = int(packet_loss.group(1)) if packet_loss else "N/A"
+            latency = int(latency.group(1)) if latency else "N/A"
 
-            return f"{domain}: Packet Loss = {packet_loss}%, Avg Latency = {avg_latency}ms"
+            return f"{domain}: Packet Loss = {packet_loss}%, Latency = {latency}ms, packet Sent = {packets_sent} "
+        except subprocess.TimeoutExpired:
+            return f"Timeout while pinging {domain}."
         except Exception as e:
             return f"Error pinging {domain}: {e}"
+
+        def resolve_ip(domain):
+            try:
+                ip_address = socket.gethostbyname(domain)
+                return ip_address
+            except socket.gaierror:
+                return "N/A"  # In case domain resolution fails
+
+        def get_isp(ip_address):
+            try:
+                obj = IPWhois(ip_address)
+                result = obj.lookup_rdap()
+                isp = result['network']['name'] if 'network' in result and 'name' in result['network'] else "Unknown"
+                return isp
+            except Exception as e:
+                print(f"Error getting ISP for {ip_address}: {e}")
+                return "Unknown"
+
+        def get_local_isp():
+            try:
+                # Fetch external IP to determine ISP
+                external_ip = requests.get("https://api64.ipify.org").text
+                obj = IPWhois(external_ip)
+                result = obj.lookup_rdap()
+                local_isp = result['network']['name'] if 'network' in result and 'name' in result[
+                    'network'] else "Unknown"
+                return local_isp
+            except Exception as e:
+                print(f"Error getting local ISP: {e}")
+                return "Unknown"
 
     def tracert(self, domain):
         try:
