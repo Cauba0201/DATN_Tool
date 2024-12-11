@@ -1,4 +1,3 @@
-import socket
 import tkinter as tk
 from tkinter import filedialog, scrolledtext
 from tkinter import ttk  # For improved styles
@@ -9,6 +8,7 @@ import re
 
 import requests
 from ipwhois import IPWhois
+import socket
 
 
 class PingApp:

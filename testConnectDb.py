@@ -117,7 +117,7 @@ def process_file(file_path):
     except Exception as e:
         print(f"Error: {e}")
 
-def ping_loop(file_path, interval=60):
+def ping_loop(file_path, interval=900):
     while True:
         print(f"\nStarting new ping cycle...")
         process_file(file_path)  # Ping all hosts
@@ -129,4 +129,4 @@ if __name__ == "__main__":
         print("Usage: python process_ping.py <data_file>")
     else:
         file_path = sys.argv[1]
-        ping_loop(file_path, interval=60)
+        ping_loop(file_path, interval=900)

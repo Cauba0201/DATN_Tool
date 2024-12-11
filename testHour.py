@@ -4,6 +4,8 @@ import re
 import socket
 import psycopg2  # Import for PostgreSQL connection
 from concurrent.futures import ThreadPoolExecutor, as_completed  # Import for multithreading
+
+import requests
 from ipwhois import IPWhois  # Import for getting ISP information
 import time  # Import to use sleep for periodic execution
 from datetime import datetime, timedelta
@@ -16,7 +18,7 @@ def ping(domain):
     # Tìm kiếm thông tin packet loss, số gói tin gửi đi và thời gian latency
     packets_sent = re.search(r"Packets: Sent = (\d+)", output)
     packet_loss = re.search(r"(\d+)% loss", output)
-    latency = re.search(r"Average = (\d+ms)", output)
+    latency = re.search(r"Average = (\d+)ms", output)
 
     if packets_sent:
         packets_sent = packets_sent.group(1)
@@ -24,7 +26,7 @@ def ping(domain):
         packets_sent = "N/A"
 
     if packet_loss:
-        packet_loss = packet_loss.group(1) + "%"
+        packet_loss = packet_loss.group(1)
     else:
         packet_loss = "N/A"
 
@@ -53,9 +55,19 @@ def get_isp(ip_address):
         print(f"Error getting ISP for {ip_address}: {e}")
         return "Unknown"
 
-def insert_data_to_db(country, ip, packets_sent, packet_loss, avg_latency, isp):
+def get_local_isp():
     try:
-        # Connect to your PostgreSQL database
+        # Fetch external IP to determine ISP
+        external_ip = requests.get("https://api64.ipify.org").text
+        obj = IPWhois(external_ip)
+        result = obj.lookup_rdap()
+        local_isp = result['network']['name'] if 'network' in result and 'name' in result['network'] else "Unknown"
+        return local_isp
+    except Exception as e:
+        print(f"Error getting local ISP: {e}")
+        return "Unknown"
+def insert_data_to_db(country, ip, packets_sent, packet_loss, avg_latency, isp, local_isp):
+    try:
         connection = psycopg2.connect(
             user="postgres",
             password="a",
@@ -67,10 +79,10 @@ def insert_data_to_db(country, ip, packets_sent, packet_loss, avg_latency, isp):
 
         # Insert the data, including ISP information
         insert_query = """
-        INSERT INTO public.testping (country, ip, packets_sent, packet_loss, avg_latency, isp)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        """
-        cursor.execute(insert_query, (country, ip, packets_sent, packet_loss, avg_latency, isp))
+               INSERT INTO public.data_test (country, ip, packets_sent, packet_loss, avg_latency, isp, local_isp)
+               VALUES (%s, %s, %s, %s, %s, %s, %s)
+               """
+        cursor.execute(insert_query, (country, ip, packets_sent, packet_loss, avg_latency, isp, local_isp))
         connection.commit()
         print(f"Data for {country} inserted successfully.")
 
@@ -81,35 +93,35 @@ def insert_data_to_db(country, ip, packets_sent, packet_loss, avg_latency, isp):
             cursor.close()
             connection.close()
 
-def process_domain(country, domain):
+def process_domain(country, domain, local_isp):
     ip_address = resolve_ip(domain)
     packets_sent, packet_loss, latency = ping(domain)
     isp = get_isp(ip_address) if ip_address != "N/A" else "Unknown"
-    print(f"{domain:<40}{country:<15}{ip_address:<20}{packets_sent:<15}{packet_loss:<15}{latency:<15}{isp}")
+    print(f"{domain:<40}{country:<15}{ip_address:<20}{packets_sent:<15}{packet_loss:<15}{latency:<15}{isp}{local_isp}")
 
     # Insert into the database
-    insert_data_to_db(country, ip_address, packets_sent, packet_loss, latency, isp)
+    insert_data_to_db(country, ip_address, packets_sent, packet_loss, latency, isp, local_isp)
 
 def process_file(file_path):
     try:
+        local_isp = get_local_isp()  # Get the ISP of the machine running the script
+
         with open(file_path, 'r') as file:
             lines = file.readlines()
 
-        # Tạo tiêu đề cho bảng kết quả
-        print(f"{'Domain':<40}{'Country':<15}{'IP Address':<20}{'Packets Sent':<15}{'Packet Loss':<15}{'Avg Latency':<15}{'ISP'}")
-        print("=" * 130)
+        # Print header for the results table
+        print(f"{'Domain':<40}{'Application Name':<15}{'IP Address':<20}{'Packets Sent':<15}{'Packet Loss':<15}{'Avg Latency':<15}{'ISP':<20}{'Local ISP'}")
+        print("=" * 150)
 
-        # Sử dụng ThreadPoolExecutor để chạy nhiều tiến trình ping song song
         with ThreadPoolExecutor(max_workers=10) as executor:
             futures = []
             for line in lines:
-                country, domain = line.strip().split(' ', 1)  # Tách theo khoảng trắng đầu tiên
-                futures.append(executor.submit(process_domain, country, domain))
+                application_name, domain = line.strip().split(' ', 1)  # Split on the first whitespace
+                futures.append(executor.submit(process_domain, application_name, domain, local_isp))
 
-            # Đảm bảo tất cả các tiến trình hoàn thành
             for future in as_completed(futures):
                 try:
-                    future.result()  # Xử lý kết quả của từng tiến trình
+                    future.result()  # Process the result of each thread
                 except Exception as e:
                     print(f"Error in thread: {e}")
 
