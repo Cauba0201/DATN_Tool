@@ -7,18 +7,24 @@ import time
 import subprocess
 import re
 import platform
-
 import requests
 from ipwhois import IPWhois
+import gspread
+from google.oauth2.service_account import Credentials
 
-
+#API google sheet
+scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+creds = Credentials.from_service_account_file("credentials.json", scopes=scopes)
+client = gspread.authorize(creds)
+sheet_id = "1xd2kk9R7lQJQfJqTxdT_2AOqxmBVEHv209hWuvt_o3Y"
+workbook = client.open_by_key(sheet_id)
 
 class PingApp:
     def __init__(self, root):
         self.test_thread = None
         self.root = root
         self.root.title("National Connection Quality Monitoring System")
-        self.root.geometry("1234x800")  # Set a larger window size for better layout
+        self.root.geometry("1244x850")  # Set a larger window size for better layout
         self.root.resizable(True, True)  # Allow resizing
         self.host_list = []  # List of IPs/Domains
 
@@ -34,6 +40,7 @@ class PingApp:
         self.primary_bg = "#2B3E50"  # Dark blue
         self.secondary_bg = "#34495E"  # Slightly lighter blue
         self.text_color = "#ECF0F1"  # Light text
+        self.black_bg = "#000000" # black
 
         self.root.configure(bg=self.primary_bg)
 
@@ -92,14 +99,14 @@ class PingApp:
 
         tk.Label(result_frame, text="Results", font=("Helvetica", 14, "bold"), bg=self.secondary_bg, fg=self.text_color).pack(anchor=tk.W, pady=5)
 
-        self.output_area = scrolledtext.ScrolledText(result_frame, wrap=tk.WORD, font=("Courier", 10), bg="#2B3E50", fg=self.text_color, height=25)
+        self.output_area = scrolledtext.ScrolledText(result_frame, wrap=tk.WORD, font=("Courier", 10), bg=self.black_bg, fg=self.text_color, height=25)
         self.output_area.pack(fill=tk.BOTH, expand=True, pady=10)
 
     def update_host_display(self):
         # Update Listbox display
         self.lst_hosts.delete(0, tk.END)
-        for host, country in self.host_list:
-            self.lst_hosts.insert(tk.END, f"{host} ({country})")
+        for host in self.host_list:
+            self.lst_hosts.insert(tk.END, f"{host}")
 
 
     def create_menu_bar(self):
@@ -180,16 +187,6 @@ class PingApp:
             self.output_area.see(tk.END)
             time.sleep(interval)  # Wait specified seconds before next cycle
 
-    def execute_ping(self, domain):
-        result = self.ping(domain)
-        self.output_area.insert(tk.END, result + "\n")
-        self.output_area.see(tk.END)
-
-    def execute_tracert(self, domain):
-        result = self.tracert(domain)
-        self.output_area.insert(tk.END, result + "\n")
-        self.output_area.see(tk.END)
-
     def ping(self, domain):
         try:
             ping_count = int(self.ping_count.get())
@@ -202,20 +199,38 @@ class PingApp:
             output = result.stdout
 
             if result.returncode != 0:
-                return f"Error pinging {domain}: Host unreachable or invalid."
+                return {
+                    "domain": domain,
+                    "latency": "N/A",
+                    "packet_loss": "N/A",
+                    "packets_sent": "N/A",
+                    "error": f"Error pinging {domain}: Host unreachable or invalid."
+                }
 
             latency_match = re.search(r"Average = (\d+)ms", output) or re.search(r"avg = (\d+\.\d+) ms", output)
             latency = latency_match.group(1) if latency_match else "N/A"
 
             packet_loss_match = re.search(r"(\d+)% packet loss", output)
-            packet_loss = packet_loss_match.group(1) if packet_loss_match else "N/A"
+            packet_loss = packet_loss_match.group(1) + "%" if packet_loss_match else "0"
 
             packets_sent_match = re.search(r"(\d+) packets transmitted", output) or re.search(r"Sent = (\d+)", output)
             packets_sent = packets_sent_match.group(1) if packets_sent_match else "N/A"
 
-            return f"{domain}: Latency = {latency}ms, Packet Loss = {packet_loss}%, Packets Sent = {packets_sent}"
+            return {
+                "domain": domain,
+                "latency": latency,
+                "packet_loss": packet_loss,
+                "packets_sent": packets_sent,
+                "error": None
+            }
         except Exception as e:
-            return f"Error pinging {domain}: {e}"
+            return {
+                "domain": domain,
+                "latency": "N/A",
+                "packet_loss": "N/A",
+                "packets_sent": "N/A",
+                "error": str(e)
+            }
 
     def tracert(self, domain):
         try:
@@ -235,42 +250,165 @@ class PingApp:
         except Exception as e:
             return f"Error tracing route to {domain}: {e}"
 
-    def resolve_ip(domain):
+    def write_to_sheet(self, domain, packets_sent, packet_loss, latency, country, ip_address, isp, local_isp):
+        try:
+            sheet = workbook.worksheet("Trang tính1")
+            row = [
+                time.strftime("%Y-%m-%d %H:%M:%S"),
+                domain,
+                country,
+                ip_address,
+                packets_sent,
+                packet_loss,
+                latency,
+                isp,
+                local_isp
+            ]
+            sheet.append_row(row)
+        except Exception as e:
+            self.output_area.insert(tk.END, f"Error writing to Google Sheets: {e}\n")
+            self.output_area.see(tk.END)
+
+    def execute_ping(self, domain):
+        result = self.ping(domain)
+        if result["error"]:
+            self.output_area.insert(tk.END, f"{result['error']}\n")
+        else:
+            self.output_area.insert(
+                tk.END,
+                f"{result['domain']}: Latency = {result['latency']}ms, Packet Loss = {result['packet_loss']}%, Packets Sent = {result['packets_sent']}\n"
+            )
+            # Gọi hàm write_to_sheet với các giá trị cụ thể
+            self.write_to_sheet(
+                result["domain"],
+                result["packets_sent"],
+                result["packet_loss"],
+                result["latency"]
+            )
+        self.output_area.see(tk.END)
+
+    def execute_tracert(self, domain):
+        result = self.tracert(domain)
+        self.output_area.insert(tk.END, result + "\n")
+        self.output_area.see(tk.END)
+
+    def resolve_ip(self, domain):
         try:
             ip_address = socket.gethostbyname(domain)
             return ip_address
         except socket.gaierror:
             return "N/A"  # In case domain resolution fails
 
-    def get_isp(ip_address):
+    def get_isp(self, ip_address):
         try:
-            # Sử dụng ipwhois để lấy thông tin về nhà mạng từ địa chỉ IP
             obj = IPWhois(ip_address)
             result = obj.lookup_rdap()
             isp = result['network']['name'] if 'network' in result and 'name' in result['network'] else "Unknown"
             return isp
         except Exception as e:
-            print(f"Error getting ISP for {ip_address}: {e}")
+            self.output_area.insert(tk.END, f"Error getting ISP for {ip_address}: {e}\n")
+            self.output_area.see(tk.END)
             return "Unknown"
 
     def get_local_isp(self):
         try:
-            # Fetch external IP to determine ISP
             external_ip = requests.get("https://api64.ipify.org").text
             obj = IPWhois(external_ip)
             result = obj.lookup_rdap()
             local_isp = result['network']['name'] if 'network' in result and 'name' in result['network'] else "Unknown"
             return local_isp
         except Exception as e:
-            print(f"Error getting local ISP: {e}")
+            self.output_area.insert(tk.END, f"Error getting local ISP: {e}\n")
+            self.output_area.see(tk.END)
             return "Unknown"
 
-    def process_domain(country, domain, local_isp):
-        ip_address = resolve_ip(domain)
-        packets_sent, packet_loss, latency = ping(domain)
-        isp = get_isp(ip_address) if ip_address != "N/A" else "Unknown"
-        print(
-            f"{domain:<40}{country:<15}{ip_address:<20}{packets_sent:<15}{packet_loss:<15}{latency:<15}{isp}{local_isp}")
+    def start_test(self):
+        if not self.host_list:
+            messagebox.showwarning("Warning", "No hosts to test!")
+            return
+
+        self.stop_event.clear()
+
+        local_isp = self.get_local_isp()
+
+        self.test_thread = Thread(target=self.test_loop, args=(local_isp,))
+        self.test_thread.start()
+
+    def test_loop(self, local_isp):
+        interval = int(self.ping_interval.get())
+        while not self.stop_event.is_set():
+            self.output_area.insert(tk.END, ">>> Starting new test cycle...\n")
+            self.output_area.see(tk.END)
+
+            for domain in self.host_list:
+                if self.stop_event.is_set():
+                    break
+                self.process_domain("Unknown Country", domain, local_isp)
+
+            self.output_area.insert(tk.END, ">>> Waiting for next cycle...\n\n")
+            self.output_area.see(tk.END)
+            time.sleep(interval)
+
+    def get_country_by_ip(self, ip_address):
+        try:
+            # URL API của iplocation.net
+            url = f"https://api.iplocation.net/?ip={ip_address}"
+
+            # Gửi yêu cầu GET đến API
+            response = requests.get(url)
+
+            if response.status_code != 200:
+                self.output_area.insert(tk.END, f"Error: API request failed with status code {response.status_code}\n")
+                self.output_area.see(tk.END)
+                return "Unknown"
+
+            data = response.json()
+
+            # Lấy thông tin country
+            country = data.get("country_name", "Unknown")
+            return country
+        except Exception as e:
+            self.output_area.insert(tk.END, f"Error getting country for {ip_address}: {e}\n")
+            self.output_area.see(tk.END)
+            return "Unknown"
+
+    def process_domain(self, country, domain, local_isp):
+        # Lấy địa chỉ IP
+        ip_address = self.resolve_ip(domain)
+        if ip_address == "N/A":
+            self.output_area.insert(tk.END, f"{domain}: Unable to resolve IP\n")
+            self.output_area.see(tk.END)
+            return
+
+        # Lấy thông tin quốc gia từ API
+        detected_country = self.get_country_by_ip(ip_address)
+
+        # Ping domain
+        result = self.ping(domain)
+        isp = self.get_isp(ip_address)
+
+        if result["error"]:
+            self.output_area.insert(tk.END, f"{result['error']}\n")
+        else:
+            self.output_area.insert(
+                tk.END,
+                f"IP/Domain = {domain}: Country = {detected_country}, IP = {ip_address}, ISP = {isp}, "
+                f"Local ISP = {local_isp}, Latency = {result['latency']}ms, "
+                f"Packet Loss = {result['packet_loss']}%, Packets Sent = {result['packets_sent']}\n"
+            )
+
+            # Ghi thông tin vào Google Sheets
+            self.write_to_sheet(
+                domain,
+                result["packets_sent"],
+                result["packet_loss"],
+                result["latency"],
+                detected_country,
+                ip_address,
+                isp,
+                local_isp
+            )
+        self.output_area.see(tk.END)
 
 
 class FormListHost:
@@ -303,8 +441,8 @@ class FormListHost:
     def update_host_display(self):
         # Update Listbox display
         self.lst_hosts.delete(0, tk.END)
-        for host, country in self.host_list:
-            self.lst_hosts.insert(tk.END, f"{host} ({country})")
+        for host in self.host_list:
+            self.lst_hosts.insert(tk.END, f"{host}")
 
     def add_host(self):
         new_host = simpledialog.askstring("Add Host", "Enter IP or domain:")
